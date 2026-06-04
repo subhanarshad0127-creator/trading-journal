@@ -263,6 +263,7 @@ select.form-control option{background:var(--card)}
         <h1 id="topbar-title">Dashboard</h1>
       </div>
       <div class="topbar-right">
+        <button class="btn btn-ghost" onclick="openSettings()" title="Fee Settings" style="padding:8px 10px;font-size:16px">⚙️</button>
         <button class="btn btn-accent" onclick="openAddModal()">+ Add Trade</button>
       </div>
     </div>
@@ -370,8 +371,10 @@ select.form-control option{background:var(--card)}
       </div>
 
       <div class="preview-bar" id="pnl-preview" style="display:none">
-        <div class="preview-item"><span class="pi-label">P&amp;L:</span><span id="prev-pnl">—</span></div>
-        <div class="preview-item"><span class="pi-label">R:R:</span><span id="prev-rr">—</span></div>
+        <div class="preview-item"><span class="pi-label">Gross:</span><span id="prev-gross">—</span></div>
+        <div class="preview-item"><span class="pi-label">Fee:</span><span id="prev-fee" style="color:#f0a050">—</span></div>
+        <div class="preview-item"><span class="pi-label">Net P&amp;L:</span><span id="prev-pnl">—</span></div>
+        <div class="preview-item"><span class="pi-label">Planned R:R:</span><span id="prev-rr">—</span></div>
       </div>
 
       <form id="trade-form" onsubmit="submitTrade(event)">
@@ -419,6 +422,11 @@ select.form-control option{background:var(--card)}
               <button type="button" class="toggle-btn" id="res-be" onclick="setResult('Breakeven')">BE</button>
             </div>
           </div>
+        </div>
+
+        <div id="fee-note" style="font-size:11px;color:var(--muted);background:rgba(240,160,80,.06);border:1px solid rgba(240,160,80,.2);border-radius:6px;padding:8px 12px;margin-bottom:14px;line-height:1.5">
+          💡 <strong style="color:#f0a050">MEXC Futures fees:</strong> Taker 0.02% per side = <strong id="fee-note-rate">0.04%</strong> per trade deducted from P&L.
+          Holding 500+ MX tokens reduces this to 0.02% total. Toggle in ⚙️ Settings.
         </div>
 
         <!-- Quick add only -->
@@ -526,6 +534,46 @@ select.form-control option{background:var(--card)}
   </div>
 </div>
 
+<!-- Settings Modal -->
+<div class="modal-overlay hidden" id="settings-modal" onclick="handleOverlayClick(event,'settings-modal')">
+  <div class="modal" style="max-width:440px" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>⚙️ Fee Settings</h2>
+      <button class="modal-close" onclick="closeModal('settings-modal')">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div>
+            <div style="font-weight:600;margin-bottom:2px">MX Token Holder (500+ MX)</div>
+            <div style="font-size:12px;color:var(--muted)">Reduces taker fee to 0.01% per side</div>
+          </div>
+          <label style="position:relative;width:44px;height:24px;cursor:pointer">
+            <input type="checkbox" id="mx-toggle" style="opacity:0;width:0;height:0" onchange="toggleMX(this.checked)">
+            <span id="mx-slider" style="position:absolute;inset:0;border-radius:12px;background:var(--border);transition:.2s;display:flex;align-items:center;padding:2px">
+              <span id="mx-knob" style="width:20px;height:20px;border-radius:50%;background:#fff;transition:.2s;transform:translateX(0)"></span>
+            </span>
+          </label>
+        </div>
+        <div style="font-size:12px;padding:10px 12px;border-radius:8px;background:rgba(0,208,132,.06);border:1px solid rgba(0,208,132,.15)">
+          <strong>Current fee rate:</strong>
+          <span id="settings-fee-display" style="color:var(--accent);margin-left:6px"></span>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.7;padding:12px;background:var(--bg);border-radius:8px;border:1px solid var(--border)">
+        <strong style="color:var(--text)">MEXC Futures Taker Fees</strong><br>
+        Standard: <span style="color:var(--red)">0.02% per side → 0.04% per trade</span><br>
+        With 500+ MX: <span style="color:var(--accent)">0.01% per side → 0.02% per trade</span><br><br>
+        All P&L figures in this journal are <strong style="color:var(--text)">net of fees</strong>. The fee is calculated as:<br>
+        <code style="background:rgba(255,255,255,.05);padding:2px 6px;border-radius:4px">Position Size × fee rate</code>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:16px">
+        <button class="btn btn-accent" onclick="closeModal('settings-modal')">Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Lightbox -->
 <div id="lightbox" class="hidden" onclick="closeLightbox()">
   <img id="lightbox-img" src="" alt="Screenshot">
@@ -546,6 +594,7 @@ let calMonth = 5; // 0-indexed, June
 let editingId = null;
 let screenshotData = null;
 let charts = {};
+let mxHolder = localStorage.getItem('mxHolder') === 'true';
 
 function genId(){ return 'tr_' + Date.now() + '_' + Math.random().toString(36).slice(2,7); }
 
@@ -589,7 +638,9 @@ function saveTrades(){
 }
 
 // ===== P&L & RR CALC =====
-function calcPnl(t){
+function getFeeRate(){ return mxHolder ? 0.0002 : 0.0004; }
+
+function calcGrossPnl(t){
   if(t.pnlOverride !== null && t.pnlOverride !== undefined && t.pnlOverride !== '') return parseFloat(t.pnlOverride);
   if(t.entry == null || t.exit == null || t.size == null) return null;
   const e = parseFloat(t.entry), x = parseFloat(t.exit), s = parseFloat(t.size);
@@ -598,16 +649,29 @@ function calcPnl(t){
   else return (e - x) / e * s;
 }
 
+function calcFee(t){
+  // No fee when pnlOverride is set (user entered net P&L directly)
+  if(t.pnlOverride !== null && t.pnlOverride !== undefined && t.pnlOverride !== '') return 0;
+  if(t.size == null) return 0;
+  const s = parseFloat(t.size);
+  return isNaN(s) ? 0 : s * getFeeRate();
+}
+
+function calcNetPnl(t){
+  const gross = calcGrossPnl(t);
+  if(gross === null) return null;
+  return gross - calcFee(t);
+}
+
+// Planned R:R — uses Entry / SL / TP only (not exit price)
 function calcRR(t){
-  if(t.entry == null || t.exit == null || t.sl == null) return null;
-  const e = parseFloat(t.entry), x = parseFloat(t.exit), sl = parseFloat(t.sl);
-  if(isNaN(e)||isNaN(x)||isNaN(sl)) return null;
+  if(t.entry == null || t.sl == null || t.tp == null) return null;
+  const e = parseFloat(t.entry), sl = parseFloat(t.sl), tp = parseFloat(t.tp);
+  if(isNaN(e)||isNaN(sl)||isNaN(tp)) return null;
   const risk = Math.abs(e - sl);
   if(risk === 0) return null;
-  const reward = Math.abs(x - e);
-  const rr = reward / risk;
-  if(t.direction === 'Long') return x > e ? rr : -rr;
-  else return x < e ? rr : -rr;
+  const reward = Math.abs(tp - e);
+  return reward / risk;
 }
 
 function autoResult(entry, exit, dir){
@@ -641,7 +705,7 @@ function fmtPnl(v){
 
 function fmtRR(v){
   if(v === null || v === undefined) return '—';
-  return parseFloat(v).toFixed(2) + 'R';
+  return '1 : ' + parseFloat(v).toFixed(2);
 }
 
 // ===== STATS =====
@@ -653,17 +717,17 @@ function computeStats(){
   const wr = closed.length ? (wins / closed.length * 100).toFixed(1) : '0.0';
 
   let totalPnl = 0;
-  trades.forEach(t => { const p = calcPnl(t); if(p!==null) totalPnl += p; });
+  trades.forEach(t => { const p = calcNetPnl(t); if(p!==null) totalPnl += p; }); // Net P&L (after fees)
 
   const rrs = trades.map(t => calcRR(t)).filter(r => r!==null);
   const avgRR = rrs.length ? rrs.reduce((a,b)=>a+b,0)/rrs.length : null;
 
   let best = null, worst = null;
   trades.forEach(t => {
-    const p = calcPnl(t);
+    const p = calcNetPnl(t);
     if(p === null) return;
-    if(best === null || p > calcPnl(best)) best = t;
-    if(worst === null || p < calcPnl(worst)) worst = t;
+    if(best === null || p > calcNetPnl(best)) best = t;
+    if(worst === null || p < calcNetPnl(worst)) worst = t;
   });
 
   let streak = 0, streakType = '';
@@ -681,14 +745,14 @@ function computeStats(){
 function renderStats(){
   const s = computeStats();
   const grid = document.getElementById('stats-grid');
-  const bestPnl = s.best ? calcPnl(s.best) : null;
-  const worstPnl = s.worst ? calcPnl(s.worst) : null;
+  const bestPnl = s.best ? calcNetPnl(s.best) : null;
+  const worstPnl = s.worst ? calcNetPnl(s.worst) : null;
 
   grid.innerHTML = `
     <div class="stat-card ${s.totalPnl>=0?'green':'red'}">
-      <div class="stat-label">Total P&amp;L</div>
+      <div class="stat-label">Total Net Profit (after fees)</div>
       <div class="stat-value ${s.totalPnl>=0?'text-green':'text-red'}">${fmtPnl(s.totalPnl)}</div>
-      <div class="stat-sub">${s.total} trades</div>
+      <div class="stat-sub">${s.total} trades · fee ${mxHolder?'0.02':'0.04'}% per trade</div>
     </div>
     <div class="stat-card green">
       <div class="stat-label">Win Rate</div>
@@ -728,9 +792,9 @@ function renderCharts(){
   destroyChart('wl');
   destroyChart('monthly');
 
-  const sorted = [...trades].filter(t=>calcPnl(t)!==null).sort((a,b)=>a.date.localeCompare(b.date));
+  const sorted = [...trades].filter(t=>calcNetPnl(t)!==null).sort((a,b)=>a.date.localeCompare(b.date));
   let cum = 0;
-  const equityData = sorted.map(t => { cum += calcPnl(t); return { x: t.date, y: parseFloat(cum.toFixed(2)) }; });
+  const equityData = sorted.map(t => { cum += calcNetPnl(t); return { x: t.date, y: parseFloat(cum.toFixed(2)) }; });
   const ctx1 = document.getElementById('chartEquity').getContext('2d');
   const grad = ctx1.createLinearGradient(0,0,0,200);
   grad.addColorStop(0,'rgba(0,208,132,0.3)');
@@ -787,8 +851,8 @@ function renderCharts(){
     trades.forEach(t => {
       const d = new Date(t.date);
       if(d.getFullYear()===m.year && d.getMonth()===m.month){
-        const p = calcPnl(t);
-        if(p !== null) sum += p;
+        const p = calcNetPnl(t);
+        if(p !== null) sum += p; // p is calcNetPnl
       }
     });
     return sum;
@@ -860,18 +924,18 @@ function renderRRCharts(){
   });
   document.getElementById('rr-stats').innerHTML = `
     <div class="stat-card yellow">
-      <div class="stat-label">Average R:R</div>
-      <div class="stat-value text-yellow">${avgRR !== null ? avgRR.toFixed(2)+'R' : '—'}</div>
-      <div class="stat-sub">${validRR.length} trades with SL</div>
+      <div class="stat-label">Avg Planned R:R</div>
+      <div class="stat-value text-yellow">${avgRR !== null ? '1 : '+avgRR.toFixed(2) : '—'}</div>
+      <div class="stat-sub">${validRR.length} trades with SL &amp; TP set</div>
     </div>
     <div class="stat-card green">
-      <div class="stat-label">Best R:R Trade</div>
-      <div class="stat-value text-green">${bestRR ? bestRR.rr.toFixed(2)+'R' : '—'}</div>
+      <div class="stat-label">Best Planned R:R</div>
+      <div class="stat-value text-green">${bestRR ? '1 : '+bestRR.rr.toFixed(2) : '—'}</div>
       <div class="stat-sub">${bestRR ? bestRR.t.coin + ' · ' + bestRR.t.date : '—'}</div>
     </div>
     <div class="stat-card red">
-      <div class="stat-label">Worst R:R Trade</div>
-      <div class="stat-value text-red">${worstRR ? worstRR.rr.toFixed(2)+'R' : '—'}</div>
+      <div class="stat-label">Worst Planned R:R</div>
+      <div class="stat-value text-red">${worstRR ? '1 : '+worstRR.rr.toFixed(2) : '—'}</div>
       <div class="stat-sub">${worstRR ? worstRR.t.coin + ' · ' + worstRR.t.date : '—'}</div>
     </div>
   `;
@@ -896,7 +960,7 @@ function getFilteredSorted(){
 
   filtered.sort((a,b) => {
     let va, vb;
-    if(sortCol === 'pnl'){ va = calcPnl(a)??-Infinity; vb = calcPnl(b)??-Infinity; }
+    if(sortCol === 'pnl'){ va = calcNetPnl(a)??-Infinity; vb = calcNetPnl(b)??-Infinity; }
     else if(sortCol === 'rr'){ va = calcRR(a)??-Infinity; vb = calcRR(b)??-Infinity; }
     else if(sortCol === 'entry'||sortCol === 'exit'){ va = parseFloat(a[sortCol])||0; vb = parseFloat(b[sortCol])||0; }
     else { va = (a[sortCol]||'').toString().toLowerCase(); vb = (b[sortCol]||'').toString().toLowerCase(); }
@@ -924,7 +988,7 @@ function renderTable(){
   }
 
   filtered.forEach(t => {
-    const pnl = calcPnl(t);
+    const pnl = calcNetPnl(t);
     const rr = calcRR(t);
 
     const row = document.createElement('tr');
@@ -969,7 +1033,10 @@ function toggleDetailRow(id, row){
 }
 
 function insertDetailRow(t, row){
-  const pnl = calcPnl(t);
+  const gross = calcGrossPnl(t);
+  const fee = calcFee(t);
+  const pnl = calcNetPnl(t);
+  const rr = calcRR(t);
   const detail = document.createElement('tr');
   detail.className = 'detail-row';
   detail.dataset.detailId = t.id;
@@ -985,8 +1052,11 @@ function insertDetailRow(t, row){
         <div style="margin-bottom:10px;display:flex;gap:16px;flex-wrap:wrap">
           <span class="text-muted" style="font-size:12px">SL: <strong style="color:var(--text)">${fmtPrice(t.sl)}</strong></span>
           <span class="text-muted" style="font-size:12px">TP: <strong style="color:var(--text)">${fmtPrice(t.tp)}</strong></span>
+          <span class="text-muted" style="font-size:12px">Planned R:R: <strong style="color:var(--yellow)">${fmtRR(rr)}</strong></span>
           <span class="text-muted" style="font-size:12px">Size: <strong style="color:var(--text)">${t.size ? '$'+parseFloat(t.size).toLocaleString() : '—'}</strong></span>
-          <span class="text-muted" style="font-size:12px">P&amp;L: <strong class="${pnl!==null?(pnl>=0?'text-green':'text-red'):''}">${fmtPnl(pnl)}</strong></span>
+          ${gross !== null ? `<span class="text-muted" style="font-size:12px">Gross P&amp;L: <strong class="${gross>=0?'text-green':'text-red'}">${fmtPnl(gross)}</strong></span>` : ''}
+          ${fee > 0 ? `<span class="text-muted" style="font-size:12px">Fee (${mxHolder?'0.02':'0.04'}%): <strong style="color:#f0a050">-${fmtPnl(fee).replace(/^[+-]/,'$')}</strong></span>` : ''}
+          <span class="text-muted" style="font-size:12px">Net P&amp;L: <strong class="${pnl!==null?(pnl>=0?'text-green':'text-red'):''}">${fmtPnl(pnl)}</strong></span>
         </div>
         ${t.notes ? `<p style="color:var(--muted);font-size:13px;margin-bottom:8px;line-height:1.5">${escHtml(t.notes)}</p>` : ''}
         <div>${(t.tags||[]).map(tag=>`<span class="tag-pill">${escHtml(tag.trim())}</span>`).join('')}</div>
@@ -1054,7 +1124,7 @@ function updateSelectionBanner(){
   const banner = document.getElementById('selection-banner');
   if(selectedIds.size === 0){ banner.style.display='none'; return; }
   const sel = trades.filter(t=>selectedIds.has(t.id));
-  let totalPnl = 0; sel.forEach(t=>{const p=calcPnl(t);if(p!==null)totalPnl+=p;});
+  let totalPnl = 0; sel.forEach(t=>{const p=calcNetPnl(t);if(p!==null)totalPnl+=p;});
   const wins = sel.filter(t=>t.result==='Win').length;
   const closed = sel.filter(t=>t.result).length;
   const wr = closed ? (wins/closed*100).toFixed(1) : '0.0';
@@ -1106,7 +1176,7 @@ function renderCalendar(){
     const cell = document.createElement('div');
     const dayTrades = dayMap[d] || [];
     let netPnl = 0;
-    dayTrades.forEach(t => { const p = calcPnl(t); if(p!==null) netPnl += p; });
+    dayTrades.forEach(t => { const p = calcNetPnl(t); if(p!==null) netPnl += p; });
     const isToday = today.getFullYear()===calYear && today.getMonth()===calMonth && today.getDate()===d;
 
     let cls = 'cal-cell';
@@ -1135,7 +1205,7 @@ function openDayModal(day, dayTrades){
   document.getElementById('day-modal-title').textContent = MONTHS[calMonth] + ' ' + day + ', ' + calYear;
   const body = document.getElementById('day-modal-body');
   body.innerHTML = dayTrades.map(t => {
-    const pnl = calcPnl(t);
+    const pnl = calcNetPnl(t);
     return `<div class="day-trade-item">
       <div>
         <strong>${t.coin}</strong>
@@ -1184,7 +1254,7 @@ function handleOverlayClick(e, id){ if(e.target.id===id) closeModal(id); }
 
 document.addEventListener('keydown', e => {
   if(e.key === 'Escape'){
-    ['trade-modal','confirm-modal','day-modal'].forEach(id => closeModal(id));
+    ['trade-modal','confirm-modal','day-modal','settings-modal'].forEach(id => closeModal(id));
     closeLightbox();
   }
 });
@@ -1296,6 +1366,8 @@ function updatePreview(){
     if(pnlOv !== ''){
       bar.style.display = 'flex';
       const v = parseFloat(pnlOv);
+      document.getElementById('prev-gross').textContent = '—';
+      document.getElementById('prev-fee').textContent = '—';
       document.getElementById('prev-pnl').innerHTML = `<span class="${v>=0?'text-green':'text-red'}">${fmtPnl(v)}</span>`;
       document.getElementById('prev-rr').textContent = '—';
     } else {
@@ -1304,25 +1376,29 @@ function updatePreview(){
     return;
   }
   const entry = parseFloat(document.getElementById('f-entry').value);
-  const exit = parseFloat(document.getElementById('f-exit').value);
-  const sl = parseFloat(document.getElementById('f-sl').value);
-  const size = parseFloat(document.getElementById('f-size').value);
+  const exit  = parseFloat(document.getElementById('f-exit').value);
+  const sl    = parseFloat(document.getElementById('f-sl').value);
+  const tp    = parseFloat(document.getElementById('f-tp').value);
+  const size  = parseFloat(document.getElementById('f-size').value);
 
   const hasPnlData = !isNaN(entry) && !isNaN(exit) && !isNaN(size) && entry > 0 && size > 0;
   if(!hasPnlData){ bar.style.display='none'; return; }
   bar.style.display='flex';
 
-  let pnl;
-  if(currentDir==='Long') pnl = (exit-entry)/entry*size;
-  else pnl = (entry-exit)/entry*size;
-  document.getElementById('prev-pnl').innerHTML = `<span class="${pnl>=0?'text-green':'text-red'}">${fmtPnl(pnl)}</span>`;
+  const gross = currentDir==='Long' ? (exit-entry)/entry*size : (entry-exit)/entry*size;
+  const fee   = size * getFeeRate();
+  const net   = gross - fee;
 
-  if(!isNaN(sl) && sl > 0){
-    const risk = Math.abs(entry-sl);
+  document.getElementById('prev-gross').innerHTML = `<span class="${gross>=0?'text-green':'text-red'}">${fmtPnl(gross)}</span>`;
+  document.getElementById('prev-fee').textContent = `-$${fee.toFixed(2)} (${mxHolder?'0.02':'0.04'}%)`;
+  document.getElementById('prev-pnl').innerHTML   = `<span class="${net>=0?'text-green':'text-red'}">${fmtPnl(net)}</span>`;
+
+  // Planned R:R uses Entry / SL / TP
+  if(!isNaN(sl) && !isNaN(tp) && sl > 0 && tp > 0){
+    const risk = Math.abs(entry - sl);
     if(risk > 0){
-      const reward = Math.abs(exit-entry);
-      const rr = (reward/risk).toFixed(2);
-      document.getElementById('prev-rr').textContent = rr + 'R';
+      const reward = Math.abs(tp - entry);
+      document.getElementById('prev-rr').textContent = '1 : ' + (reward/risk).toFixed(2);
     } else {
       document.getElementById('prev-rr').textContent = '—';
     }
@@ -1442,7 +1518,7 @@ function showConfirm(title, text, onOk){
 function exportCSV(){
   const headers = ['id','date','coin','direction','entry','exit','sl','tp','size','result','pnl','rr','tags','notes'];
   const rows = trades.map(t => {
-    const pnl = calcPnl(t);
+    const pnl = calcNetPnl(t);
     const rr = calcRR(t);
     return [
       t.id, t.date, t.coin, t.direction,
@@ -1531,8 +1607,45 @@ function clearDataConfirm(){
   });
 }
 
+// ===== SETTINGS =====
+function openSettings(){
+  const cb = document.getElementById('mx-toggle');
+  cb.checked = mxHolder;
+  updateMXSlider(mxHolder);
+  updateSettingsFeeDisplay();
+  openModal('settings-modal');
+}
+
+function toggleMX(checked){
+  mxHolder = checked;
+  localStorage.setItem('mxHolder', checked);
+  updateMXSlider(checked);
+  updateSettingsFeeDisplay();
+  updateFeeNote();
+}
+
+function updateMXSlider(on){
+  const slider = document.getElementById('mx-slider');
+  const knob   = document.getElementById('mx-knob');
+  slider.style.background = on ? 'var(--accent)' : 'var(--border)';
+  knob.style.transform    = on ? 'translateX(20px)' : 'translateX(0)';
+}
+
+function updateSettingsFeeDisplay(){
+  const el = document.getElementById('settings-fee-display');
+  if(el) el.textContent = mxHolder
+    ? '0.01% per side (0.02% per trade) — MX Discount active ✓'
+    : '0.02% per side (0.04% per trade) — Standard rate';
+}
+
+function updateFeeNote(){
+  const el = document.getElementById('fee-note-rate');
+  if(el) el.textContent = mxHolder ? '0.02%' : '0.04%';
+}
+
 // ===== INIT =====
 loadTrades();
+updateFeeNote();
 navigate('dashboard');
 </script>
 </body>
